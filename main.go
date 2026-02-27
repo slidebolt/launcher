@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -81,7 +82,11 @@ func up() {
 	startNATS()
 
 	fmt.Println("2. Gateway: Building and starting...")
-	build("gateway", "gateway")
+	if err := build("gateway", "gateway"); err != nil {
+		fmt.Printf("CRITICAL: gateway build failed: %v\n", err)
+		down()
+		os.Exit(1)
+	}
 	coreRPCSubject := runner.SubjectRPCPrefix + cfg.CorePluginID
 	startService("gateway", filepath.Join(binDir, "gateway"), map[string]string{
 		runner.EnvAPIPort:      cfg.APIPort,
@@ -105,10 +110,18 @@ func up() {
 	}
 
 	fmt.Println("3. Plugins: Building and supervising...")
+	skipped := make([]string, 0)
 	for _, path := range discoverPluginPaths("plugins") {
 		name := filepath.Base(path)
-		build(name, path)
+		if err := build(name, path); err != nil {
+			fmt.Printf("[skip] plugin build failed [%s]: %v\n", name, err)
+			skipped = append(skipped, name)
+			continue
+		}
 		go supervise(name, filepath.Join(binDir, name))
+	}
+	if len(skipped) > 0 {
+		fmt.Printf("Skipped plugins due to build errors: %s\n", strings.Join(skipped, ", "))
 	}
 
 	fmt.Println("\nGateway is up. Supervision active.")
@@ -152,7 +165,7 @@ func discoverRuntime() (config, bool) {
 func supervise(name, bin string) {
 	for {
 		fmt.Printf("[%s] starting...\n", name)
-		cmd := startService(name, bin, map[string]string{
+		cmd := startPluginService(name, bin, map[string]string{
 			runner.EnvNATSURL:    cfg.NATSURL,
 			runner.EnvPluginData: filepath.Join(dataDir, name),
 		})
@@ -182,14 +195,17 @@ func discoverPluginPaths(root string) []string {
 	entries, _ := os.ReadDir(root)
 	var paths []string
 	for _, entry := range entries {
+		path := filepath.Join(root, entry.Name())
 		if !entry.IsDir() {
-			continue
+			info, err := os.Stat(path)
+			if err != nil || !info.IsDir() {
+				continue
+			}
 		}
 		name := entry.Name()
 		if strings.HasPrefix(name, ".") || strings.HasSuffix(name, ".del") {
 			continue
 		}
-		path := filepath.Join(root, name)
 		if isBuildable(path) {
 			paths = append(paths, path)
 		}
@@ -203,13 +219,21 @@ func isBuildable(path string) bool {
 	return errMod == nil && errMain == nil
 }
 
-func build(name, path string) {
-	out := filepath.Join(binDir, name)
-	cmd := exec.Command("go", "build", "-o", out, "./"+path)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		fmt.Printf("build error [%s]: %s\n", name, string(out))
-		os.Exit(1)
+func build(name, path string) error {
+	out, _ := filepath.Abs(filepath.Join(binDir, name))
+	cmd := exec.Command("go", "build", "-o", out, ".")
+	cmd.Dir = path
+	goWork := "auto"
+	if abs, err := filepath.Abs("go.work"); err == nil {
+		if _, statErr := os.Stat(abs); statErr == nil {
+			goWork = abs
+		}
 	}
+	cmd.Env = append(os.Environ()[:len(os.Environ()):len(os.Environ())], "GOWORK="+goWork)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("%s", strings.TrimSpace(string(output)))
+	}
+	return nil
 }
 
 func startNATS() {
@@ -227,11 +251,20 @@ func startNATS() {
 }
 
 func startService(name, bin string, env map[string]string) *exec.Cmd {
+	return startServiceWithPluginEnv(name, bin, env, nil)
+}
+
+func startPluginService(name, bin string, env map[string]string) *exec.Cmd {
+	pluginEnv := loadPluginEnv(name)
+	return startServiceWithPluginEnv(name, bin, env, pluginEnv)
+}
+
+func startServiceWithPluginEnv(name, bin string, env map[string]string, pluginEnv map[string]string) *exec.Cmd {
 	os.MkdirAll(filepath.Join(dataDir, name), 0o755)
 	logFile, _ := os.OpenFile(filepath.Join(logDir, name+".log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 
 	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ()[:len(os.Environ()):len(os.Environ())], envSlice(env)...)
+	cmd.Env = mergedEnv(os.Environ(), pluginEnv, env)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
@@ -316,4 +349,109 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func loadPluginEnv(name string) map[string]string {
+	files := findPluginEnvFiles(name)
+	out := make(map[string]string)
+	for _, f := range files {
+		vals, err := parseDotEnvFile(f)
+		if err != nil {
+			continue
+		}
+		for k, v := range vals {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+func findPluginEnvFiles(name string) []string {
+	configRoot := strings.TrimSpace(os.Getenv("LAUNCHER_PLUGIN_CONFIG_ROOT"))
+	if configRoot == "" {
+		configRoot = filepath.Join("config", "plugins")
+	}
+
+	roots := []string{
+		filepath.Join(configRoot, name),
+		filepath.Join("plugins", name),
+	}
+	out := make([]string, 0, 4)
+	seen := map[string]struct{}{}
+	addIfExists := func(path string) {
+		if _, exists := seen[path]; exists {
+			return
+		}
+		if _, err := os.Stat(path); err == nil {
+			out = append(out, path)
+			seen[path] = struct{}{}
+		}
+	}
+	for _, root := range roots {
+		addIfExists(filepath.Join(root, ".env"))
+		addIfExists(filepath.Join(root, ".env.local"))
+	}
+	return out
+}
+
+func parseDotEnvFile(path string) (map[string]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	out := make(map[string]string)
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+		i := strings.Index(line, "=")
+		if i <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:i])
+		val := strings.TrimSpace(line[i+1:])
+		val = strings.Trim(val, `"'`)
+		if key == "" {
+			continue
+		}
+		out[key] = val
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func mergedEnv(base []string, pluginEnv map[string]string, runtimeEnv map[string]string) []string {
+	envMap := make(map[string]string)
+	for _, kv := range base {
+		if i := strings.Index(kv, "="); i > 0 {
+			envMap[kv[:i]] = kv[i+1:]
+		}
+	}
+
+	// Process env stays highest precedence over plugin files.
+	for k, v := range pluginEnv {
+		if _, exists := envMap[k]; !exists {
+			envMap[k] = v
+		}
+	}
+
+	// Runtime env always wins.
+	for k, v := range runtimeEnv {
+		envMap[k] = v
+	}
+
+	out := make([]string, 0, len(envMap))
+	for k, v := range envMap {
+		out = append(out, k+"="+v)
+	}
+	return out
 }
