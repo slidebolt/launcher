@@ -76,16 +76,25 @@ func loadConfig() config {
 }
 
 func up() {
-	setupDirs()
+	prebuilt := isPrebuiltMode()
+	setupDirs(prebuilt)
 
-	fmt.Println("1. Infrastructure: Starting NATS...")
-	startNATS()
+	if shouldStartNATS() {
+		fmt.Println("1. Infrastructure: Starting NATS...")
+		startNATS()
+	} else {
+		fmt.Println("1. Infrastructure: Using external NATS...")
+	}
 
-	fmt.Println("2. Gateway: Building and starting...")
-	if err := build("gateway", "gateway"); err != nil {
-		fmt.Printf("CRITICAL: gateway build failed: %v\n", err)
-		down()
-		os.Exit(1)
+	if prebuilt {
+		fmt.Println("2. Gateway: Starting prebuilt gateway...")
+	} else {
+		fmt.Println("2. Gateway: Building and starting...")
+		if err := build("gateway", "gateway"); err != nil {
+			fmt.Printf("CRITICAL: gateway build failed: %v\n", err)
+			down()
+			os.Exit(1)
+		}
 	}
 	coreRPCSubject := runner.SubjectRPCPrefix + cfg.CorePluginID
 	startService("gateway", filepath.Join(binDir, "gateway"), map[string]string{
@@ -109,19 +118,26 @@ func up() {
 		fmt.Printf("Runtime discovered: nats=%s\n", cfg.NATSURL)
 	}
 
-	fmt.Println("3. Plugins: Building and supervising...")
-	skipped := make([]string, 0)
-	for _, path := range discoverPluginPaths("plugins") {
-		name := filepath.Base(path)
-		if err := build(name, path); err != nil {
-			fmt.Printf("[skip] plugin build failed [%s]: %v\n", name, err)
-			skipped = append(skipped, name)
-			continue
+	if prebuilt {
+		fmt.Println("3. Plugins: Starting prebuilt plugins...")
+		for _, name := range discoverPluginBinaries(binDir) {
+			go supervise(name, filepath.Join(binDir, name))
 		}
-		go supervise(name, filepath.Join(binDir, name))
-	}
-	if len(skipped) > 0 {
-		fmt.Printf("Skipped plugins due to build errors: %s\n", strings.Join(skipped, ", "))
+	} else {
+		fmt.Println("3. Plugins: Building and supervising...")
+		skipped := make([]string, 0)
+		for _, path := range discoverPluginPaths("plugins") {
+			name := filepath.Base(path)
+			if err := build(name, path); err != nil {
+				fmt.Printf("[skip] plugin build failed [%s]: %v\n", name, err)
+				skipped = append(skipped, name)
+				continue
+			}
+			go supervise(name, filepath.Join(binDir, name))
+		}
+		if len(skipped) > 0 {
+			fmt.Printf("Skipped plugins due to build errors: %s\n", strings.Join(skipped, ", "))
+		}
 	}
 
 	fmt.Println("\nGateway is up. Supervision active.")
@@ -184,7 +200,13 @@ func supervise(name, bin string) {
 	}
 }
 
-func setupDirs() {
+func setupDirs(prebuilt bool) {
+	if prebuilt {
+		for _, d := range []string{logDir, pidDir, dataDir} {
+			os.MkdirAll(d, 0o755)
+		}
+		return
+	}
 	os.RemoveAll(buildDir)
 	for _, d := range []string{binDir, logDir, pidDir, dataDir} {
 		os.MkdirAll(d, 0o755)
@@ -209,6 +231,22 @@ func discoverPluginPaths(root string) []string {
 		if isBuildable(path) {
 			paths = append(paths, path)
 		}
+	}
+	return paths
+}
+
+func discoverPluginBinaries(root string) []string {
+	entries, _ := os.ReadDir(root)
+	paths := make([]string, 0)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, "plugin-") {
+			continue
+		}
+		paths = append(paths, name)
 	}
 	return paths
 }
@@ -349,6 +387,16 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func isPrebuiltMode() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("LAUNCHER_PREBUILT")))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
+func shouldStartNATS() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("LAUNCHER_SKIP_NATS")))
+	return !(v == "1" || v == "true" || v == "yes" || v == "on")
 }
 
 func loadPluginEnv(name string) map[string]string {
