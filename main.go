@@ -62,7 +62,7 @@ func loadConfig() config {
 	natsHost := getEnv("LAUNCHER_NATS_HOST", "127.0.0.1")
 	apiPort := resolvePort("LAUNCHER_API_PORT", "8082")
 	natsPort := resolvePort("LAUNCHER_NATS_PORT", "4224")
-	corePluginID := getEnv("LAUNCHER_CORE_PLUGIN_ID", "core")
+	corePluginID := getEnv("LAUNCHER_CORE_PLUGIN_ID", "gateway")
 	return config{
 		APIHost:      apiHost,
 		APIPort:      apiPort,
