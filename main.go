@@ -421,8 +421,8 @@ func findPluginEnvFiles(name string) []string {
 	}
 
 	roots := []string{
-		filepath.Join(configRoot, name),
 		filepath.Join("plugins", name),
+		filepath.Join(configRoot, name),
 	}
 	out := make([]string, 0, 4)
 	seen := map[string]struct{}{}
