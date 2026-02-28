@@ -3,11 +3,13 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -18,11 +20,13 @@ import (
 )
 
 const (
-	buildDir = ".build"
-	binDir   = ".build/bin"
-	logDir   = ".build/logs"
-	pidDir   = ".build/pids"
-	dataDir  = ".build/data"
+	buildDir        = ".build"
+	binDir          = ".build/bin"
+	logDir          = ".build/logs"
+	pidDir          = ".build/pids"
+	dataDir         = ".build/data"
+	launcherPIDFile = ".launcher.pid"
+	launcherLock    = ".launcher.lock"
 )
 
 type config struct {
@@ -36,6 +40,7 @@ type config struct {
 }
 
 var cfg config
+var lockHandle *os.File
 
 func main() {
 	if len(os.Args) < 2 {
@@ -76,6 +81,18 @@ func loadConfig() config {
 }
 
 func up() {
+	if err := acquireSingleInstance(); err != nil {
+		fmt.Printf("launcher already running: %v\n", err)
+		os.Exit(1)
+	}
+	defer releaseSingleInstance()
+
+	if err := os.WriteFile(launcherPIDFile, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		fmt.Printf("failed writing %s: %v\n", launcherPIDFile, err)
+		os.Exit(1)
+	}
+	defer os.Remove(launcherPIDFile)
+
 	prebuilt := isPrebuiltMode()
 	setupDirs(prebuilt)
 
@@ -92,7 +109,7 @@ func up() {
 		fmt.Println("2. Gateway: Building and starting...")
 		if err := build("gateway", "gateway"); err != nil {
 			fmt.Printf("CRITICAL: gateway build failed: %v\n", err)
-			down()
+			downServices()
 			os.Exit(1)
 		}
 	}
@@ -108,7 +125,7 @@ func up() {
 
 	if !waitForGateway() {
 		fmt.Println("CRITICAL: Gateway failed health check.")
-		down()
+		downServices()
 		os.Exit(1)
 	}
 	fmt.Println("Gateway verified: PERFECT.")
@@ -141,7 +158,10 @@ func up() {
 	}
 
 	fmt.Println("\nGateway is up. Supervision active.")
-	select {}
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	<-sigCh
+	downServices()
 }
 
 func waitForGateway() bool {
@@ -283,6 +303,9 @@ func startNATS() {
 	cmd := exec.Command(natsBin, "-a", cfg.NATSHost, "-p", cfg.NATSPort)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Pdeathsig: syscall.SIGTERM,
+	}
 	if err := cmd.Start(); err == nil {
 		savePID("nats", cmd.Process.Pid)
 	}
@@ -305,6 +328,9 @@ func startServiceWithPluginEnv(name, bin string, env map[string]string, pluginEn
 	cmd.Env = mergedEnv(os.Environ(), pluginEnv, env)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Pdeathsig: syscall.SIGTERM,
+	}
 	if err := cmd.Start(); err != nil {
 		return nil
 	}
@@ -313,6 +339,13 @@ func startServiceWithPluginEnv(name, bin string, env map[string]string, pluginEn
 }
 
 func down() {
+	requestStopRunningLauncher()
+	downServices()
+	cleanupLockArtifacts()
+	fmt.Println("All services stopped.")
+}
+
+func downServices() {
 	files, _ := filepath.Glob(filepath.Join(pidDir, "*.pid"))
 	for _, f := range files {
 		data, _ := os.ReadFile(f)
@@ -334,7 +367,6 @@ func down() {
 		}
 		os.Remove(f)
 	}
-	fmt.Println("All services stopped.")
 }
 
 func status() {
@@ -359,6 +391,65 @@ func envSlice(m map[string]string) []string {
 
 func savePID(name string, pid int) {
 	os.WriteFile(filepath.Join(pidDir, name+".pid"), []byte(strconv.Itoa(pid)), 0o644)
+}
+
+func acquireSingleInstance() error {
+	f, err := os.OpenFile(launcherLock, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return fmt.Errorf("lock %s is held by another launcher", launcherLock)
+		}
+		return err
+	}
+	lockHandle = f
+	return nil
+}
+
+func releaseSingleInstance() {
+	if lockHandle == nil {
+		return
+	}
+	_ = syscall.Flock(int(lockHandle.Fd()), syscall.LOCK_UN)
+	_ = lockHandle.Close()
+	lockHandle = nil
+	_ = os.Remove(launcherLock)
+}
+
+func requestStopRunningLauncher() {
+	data, err := os.ReadFile(launcherPIDFile)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 || pid == os.Getpid() {
+		return
+	}
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if syscall.Kill(pid, 0) != nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if syscall.Kill(pid, 0) == nil {
+		_ = syscall.Kill(pid, syscall.SIGKILL)
+	}
+}
+
+func cleanupLockArtifacts() {
+	data, err := os.ReadFile(launcherPIDFile)
+	if err == nil {
+		pid, convErr := strconv.Atoi(strings.TrimSpace(string(data)))
+		if convErr == nil && pid > 0 && syscall.Kill(pid, 0) == nil {
+			return
+		}
+	}
+	_ = os.Remove(launcherPIDFile)
+	_ = os.Remove(launcherLock)
 }
 
 func resolvePort(envKey, fallback string) string {
