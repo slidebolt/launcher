@@ -2,7 +2,7 @@ module github.com/slidebolt/launcher
 
 go 1.25.7
 
-require github.com/slidebolt/sdk-runner v1.1.0
+require github.com/slidebolt/sdk-runner v1.2.1
 
 require (
 	github.com/klauspost/compress v1.18.4 // indirect
