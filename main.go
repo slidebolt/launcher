@@ -300,7 +300,10 @@ func startNATS() {
 		natsBin = filepath.Join(os.Getenv("HOME"), "go/bin/nats-server")
 	}
 	logFile, _ := os.Create(filepath.Join(logDir, "nats.log"))
-	cmd := exec.Command(natsBin, "-a", cfg.NATSHost, "-p", cfg.NATSPort)
+	natsDataDir := filepath.Join(dataDir, "nats")
+	os.MkdirAll(natsDataDir, 0o755)
+	
+	cmd := exec.Command(natsBin, "-a", cfg.NATSHost, "-p", cfg.NATSPort, "-js", "-sd", natsDataDir)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{
