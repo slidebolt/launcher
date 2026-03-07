@@ -106,6 +106,11 @@ func up() {
 	}
 
 	if prebuilt {
+		if err := validatePrebuiltBinaries(binDir, "manifest.json"); err != nil {
+			fmt.Printf("%s %v\n", ui.Error("CRITICAL:"), err)
+			downServices()
+			os.Exit(1)
+		}
 		fmt.Println(ui.Step(2, "Gateway", "Starting prebuilt gateway..."))
 	} else {
 		fmt.Println(ui.Step(2, "Gateway", "Building and starting..."))
@@ -271,6 +276,41 @@ func discoverPluginBinaries(root string) []string {
 		paths = append(paths, name)
 	}
 	return paths
+}
+
+func validatePrebuiltBinaries(root, manifestPath string) error {
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return fmt.Errorf("failed reading %s: %w", manifestPath, err)
+	}
+	var components []struct {
+		ID     string `json:"id"`
+		Binary string `json:"binary"`
+	}
+	if err := json.Unmarshal(data, &components); err != nil {
+		return fmt.Errorf("failed parsing %s: %w", manifestPath, err)
+	}
+	if len(components) == 0 {
+		return fmt.Errorf("manifest has no components: %s", manifestPath)
+	}
+	missing := make([]string, 0)
+	for _, c := range components {
+		binary := strings.TrimSpace(c.Binary)
+		if binary == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, binary)); err != nil {
+			label := binary
+			if id := strings.TrimSpace(c.ID); id != "" {
+				label = id + "(" + binary + ")"
+			}
+			missing = append(missing, label)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing prebuilt binaries: %s", strings.Join(missing, ", "))
+	}
+	return nil
 }
 
 func isBuildable(path string) bool {
