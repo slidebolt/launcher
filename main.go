@@ -41,9 +41,11 @@ type config struct {
 
 var cfg config
 var lockHandle *os.File
+var ui = runner.NewTheme()
 
 func main() {
 	if len(os.Args) < 2 {
+		fmt.Println(ui.Title("Launcher"))
 		fmt.Println("Usage: launcher [up|down|status]")
 		os.Exit(1)
 	}
@@ -58,7 +60,7 @@ func main() {
 	case "status":
 		status()
 	default:
-		fmt.Printf("unknown command: %s\n", os.Args[1])
+		fmt.Printf("%s unknown command: %s\n", ui.Error("error:"), os.Args[1])
 		os.Exit(1)
 	}
 }
@@ -82,13 +84,13 @@ func loadConfig() config {
 
 func up() {
 	if err := acquireSingleInstance(); err != nil {
-		fmt.Printf("launcher already running: %v\n", err)
+		fmt.Printf("%s launcher already running: %v\n", ui.Error("error:"), err)
 		os.Exit(1)
 	}
 	defer releaseSingleInstance()
 
 	if err := os.WriteFile(launcherPIDFile, []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
-		fmt.Printf("failed writing %s: %v\n", launcherPIDFile, err)
+		fmt.Printf("%s failed writing %s: %v\n", ui.Error("error:"), launcherPIDFile, err)
 		os.Exit(1)
 	}
 	defer os.Remove(launcherPIDFile)
@@ -97,18 +99,18 @@ func up() {
 	setupDirs(prebuilt)
 
 	if shouldStartNATS() {
-		fmt.Println("1. Infrastructure: Starting NATS...")
+		fmt.Println(ui.Step(1, "Infrastructure", "Starting NATS..."))
 		startNATS()
 	} else {
-		fmt.Println("1. Infrastructure: Using external NATS...")
+		fmt.Println(ui.Step(1, "Infrastructure", "Using external NATS..."))
 	}
 
 	if prebuilt {
-		fmt.Println("2. Gateway: Starting prebuilt gateway...")
+		fmt.Println(ui.Step(2, "Gateway", "Starting prebuilt gateway..."))
 	} else {
-		fmt.Println("2. Gateway: Building and starting...")
+		fmt.Println(ui.Step(2, "Gateway", "Building and starting..."))
 		if err := build("gateway", "gateway"); err != nil {
-			fmt.Printf("CRITICAL: gateway build failed: %v\n", err)
+			fmt.Printf("%s gateway build failed: %v\n", ui.Error("CRITICAL:"), err)
 			downServices()
 			os.Exit(1)
 		}
@@ -124,40 +126,40 @@ func up() {
 	})
 
 	if !waitForGateway() {
-		fmt.Println("CRITICAL: Gateway failed health check.")
+		fmt.Printf("%s Gateway failed health check.\n", ui.Error("CRITICAL:"))
 		downServices()
 		os.Exit(1)
 	}
-	fmt.Println("Gateway verified: PERFECT.")
+	fmt.Printf("%s %s\n", ui.Info("Gateway verified:"), ui.Value("PERFECT"))
 
 	if discovered, ok := discoverRuntime(); ok {
 		cfg.NATSURL = discovered.NATSURL
-		fmt.Printf("Runtime discovered: nats=%s\n", cfg.NATSURL)
+		fmt.Printf("%s nats=%s\n", ui.Info("Runtime discovered:"), ui.Value(cfg.NATSURL))
 	}
 
 	if prebuilt {
-		fmt.Println("3. Plugins: Starting prebuilt plugins...")
+		fmt.Println(ui.Step(3, "Plugins", "Starting prebuilt plugins..."))
 		for _, name := range discoverPluginBinaries(binDir) {
 			go supervise(name, filepath.Join(binDir, name))
 		}
 	} else {
-		fmt.Println("3. Plugins: Building and supervising...")
+		fmt.Println(ui.Step(3, "Plugins", "Building and supervising..."))
 		skipped := make([]string, 0)
 		for _, path := range discoverPluginPaths("plugins") {
 			name := filepath.Base(path)
 			if err := build(name, path); err != nil {
-				fmt.Printf("[skip] plugin build failed [%s]: %v\n", name, err)
+				fmt.Printf("%s plugin build failed [%s]: %v\n", ui.Warn("[skip]"), name, err)
 				skipped = append(skipped, name)
 				continue
 			}
 			go supervise(name, filepath.Join(binDir, name))
 		}
 		if len(skipped) > 0 {
-			fmt.Printf("Skipped plugins due to build errors: %s\n", strings.Join(skipped, ", "))
+			fmt.Printf("%s %s\n", ui.Warn("Skipped plugins due to build errors:"), strings.Join(skipped, ", "))
 		}
 	}
 
-	fmt.Println("\nGateway is up. Supervision active.")
+	fmt.Printf("\n%s %s\n", ui.Info("Gateway is up."), ui.Value("Supervision active."))
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
@@ -200,7 +202,7 @@ func discoverRuntime() (config, bool) {
 
 func supervise(name, bin string) {
 	for {
-		fmt.Printf("[%s] starting...\n", name)
+		fmt.Printf("%s %s\n", ui.Info("starting"), ui.Value(name))
 		cmd := startPluginService(name, bin, map[string]string{
 			runner.EnvNATSURL:    cfg.NATSURL,
 			runner.EnvPluginData: filepath.Join(dataDir, name),
@@ -208,14 +210,14 @@ func supervise(name, bin string) {
 		if cmd == nil {
 			return
 		}
-		fmt.Printf("[%s] PID %d\n", name, cmd.Process.Pid)
+		fmt.Printf("%s %s pid=%d\n", ui.Info("running"), ui.Value(name), cmd.Process.Pid)
 		cmd.Wait()
 
 		if _, err := os.Stat(filepath.Join(pidDir, name+".pid")); err != nil {
-			fmt.Printf("[%s] stopped\n", name)
+			fmt.Printf("%s %s\n", ui.Warn("stopped"), ui.Value(name))
 			return
 		}
-		fmt.Printf("[%s] restarting in 200ms...\n", name)
+		fmt.Printf("%s %s %s\n", ui.Warn("restarting"), ui.Value(name), ui.Muted("in 200ms..."))
 		time.Sleep(200 * time.Millisecond)
 	}
 }
@@ -302,7 +304,7 @@ func startNATS() {
 	logFile, _ := os.Create(filepath.Join(logDir, "nats.log"))
 	natsDataDir := filepath.Join(dataDir, "nats")
 	os.MkdirAll(natsDataDir, 0o755)
-	
+
 	cmd := exec.Command(natsBin, "-a", cfg.NATSHost, "-p", cfg.NATSPort, "-js", "-sd", natsDataDir)
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -345,7 +347,7 @@ func down() {
 	requestStopRunningLauncher()
 	downServices()
 	cleanupLockArtifacts()
-	fmt.Println("All services stopped.")
+	fmt.Printf("%s %s\n", ui.Info("launcher:"), ui.Value("all services stopped"))
 }
 
 func downServices() {
@@ -375,12 +377,17 @@ func downServices() {
 func status() {
 	files, _ := filepath.Glob(filepath.Join(pidDir, "*.pid"))
 	if len(files) == 0 {
-		fmt.Println("No services running.")
+		fmt.Println(ui.Warn("No services running."))
 		return
 	}
+	fmt.Println(ui.Title("Service Status"))
 	for _, f := range files {
 		data, _ := os.ReadFile(f)
-		fmt.Printf("%s: PID %s\n", strings.TrimSuffix(filepath.Base(f), ".pid"), strings.TrimSpace(string(data)))
+		fmt.Printf("%s: %s %s\n",
+			ui.Key(strings.TrimSuffix(filepath.Base(f), ".pid")),
+			ui.Muted("PID"),
+			ui.Value(strings.TrimSpace(string(data))),
+		)
 	}
 }
 
