@@ -4,3 +4,5 @@
 *.out
 vendor/
 launcher
+
+scripts/.release_guard
