@@ -19,14 +19,14 @@ import (
 	"github.com/slidebolt/sdk-runner"
 )
 
-const (
-	buildDir        = ".build"
-	binDir          = ".build/bin"
-	logDir          = ".build/logs"
-	pidDir          = ".build/pids"
-	dataDir         = ".build/data"
-	launcherPIDFile = ".launcher.pid"
-	launcherLock    = ".launcher.lock"
+var (
+	buildDir        = getEnvDirect("LAUNCHER_BUILD_DIR", ".build")
+	binDir          = filepath.Join(buildDir, "bin")
+	logDir          = filepath.Join(buildDir, "logs")
+	pidDir          = filepath.Join(buildDir, "pids")
+	dataDir         = filepath.Join(buildDir, "data")
+	launcherPIDFile = filepath.Join(buildDir, "launcher.pid")
+	launcherLock    = filepath.Join(buildDir, "launcher.lock")
 )
 
 type config struct {
@@ -524,6 +524,13 @@ func randomFreePort() string {
 }
 
 func getEnv(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func getEnvDirect(key, fallback string) string {
 	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
 		return v
 	}
