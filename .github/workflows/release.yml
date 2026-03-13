@@ -26,7 +26,7 @@ jobs:
       - name: Enforce release guard
         if: github.event_name == 'workflow_dispatch'
         run: |
-          expected_sha256="aa7e759ce4be39c01631a26583b6df6546531a4b5047ce75f501f82f7fd729e8"
+          expected_sha256="40e6ad19c9895814be89c563c12d26bd0134f9d6d78b8886436e8e8069f4aa18"
           provided_sha256="$(printf '%s' "${{ github.event.inputs.release_guard }}" | sha256sum | awk '{print $1}')"
           if [ "$provided_sha256" != "$expected_sha256" ]; then
             echo "BLOCKED: run scripts/release-safe.sh"
