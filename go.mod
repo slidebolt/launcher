@@ -5,7 +5,7 @@ go 1.25.7
 require (
 	github.com/cucumber/godog v0.15.1
 	github.com/slidebolt/sdk-runner v1.20.3
-	github.com/slidebolt/sdk-types v1.20.6
+	github.com/slidebolt/sdk-types v1.20.7
 )
 
 require (
@@ -33,3 +33,5 @@ replace github.com/slidebolt/sdk-types => ../sdk-types
 replace github.com/slidebolt/registry => ../registry
 
 replace github.com/slidebolt/sdk-runner => ../sdk-runner
+
+replace github.com/slidebolt/sdk-entities => ../sdk-entities
