@@ -68,8 +68,8 @@ var (
 	launcherOnce sync.Once
 	launcherBin  string
 
-	fixtureOnce  sync.Once
-	fixtureBins  map[string]string
+	fixtureOnce sync.Once
+	fixtureBins map[string]string
 )
 
 // LauncherBin builds (once) and returns the launcher binary path.

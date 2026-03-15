@@ -203,9 +203,9 @@ func natsService(cfg Config) *ManagedService {
 func gatewayService(cfg Config) *ManagedService {
 	rpcSubject := types.SubjectRPCPrefix + cfg.CorePluginID
 	return &ManagedService{
-		Name:    "gateway",
-		Binary:  filepath.Join(cfg.BinDir, "gateway"),
-		Env:     mergedEnv(os.Environ(), nil, map[string]string{
+		Name:   "gateway",
+		Binary: filepath.Join(cfg.BinDir, "gateway"),
+		Env: mergedEnv(os.Environ(), nil, map[string]string{
 			types.EnvAPIPort:       cfg.APIPort,
 			types.EnvAPIHost:       cfg.APIHost,
 			types.EnvNATSURL:       cfg.NATSURL,
