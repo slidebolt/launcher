@@ -50,12 +50,8 @@ github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZN
 github.com/robfig/cron/v3 v3.0.1 h1:WdRxkvbJztn8LMz/QEvLN5sBU+xKpSqwwUO1Pjr4qDs=
 github.com/robfig/cron/v3 v3.0.1/go.mod h1:eQICP3HwyT7UooqI/z+Ov+PtYAWygg1TEWWzGIFLtro=
 github.com/russross/blackfriday/v2 v2.1.0/go.mod h1:+Rmxgy9KzJVeS9/2gXHxylqXiyQDYRxCVz55jmeOWTM=
-github.com/slidebolt/registry v0.0.1 h1:TNwDDUg3Pv++5PU0MRpgar7/zVT0GFDWwENbuYhz7RQ=
-github.com/slidebolt/registry v0.0.1/go.mod h1:iFm1OP/xMBE6rpufW5PSOwNXWcj0JI8kPy43oRAq3oQ=
-github.com/slidebolt/sdk-runner v1.20.3 h1:CZCK7UkLmtxplXYEhkFDyrOcLvWzhYSkvUEu/BstpXw=
-github.com/slidebolt/sdk-runner v1.20.3/go.mod h1:fAF9V9I6f2e3hE3N5zSgMTO0Vuoxcwg21ql15d8cMK0=
-github.com/slidebolt/sdk-types v1.20.4 h1:sWnJFJxTztm1n/SET5gi1vKmM65klzuYBeYYfX0k1kY=
-github.com/slidebolt/sdk-types v1.20.4/go.mod h1:/hqN6E9IAc5mm4Nx4DGfIidoKgELdPHfr30uSdNRgTM=
+github.com/slidebolt/sdk-entities v1.20.2 h1:CejeRx09rlk/cOQbi8HFj8QqLUtpjKLwICd5VhGYCPY=
+github.com/slidebolt/sdk-entities v1.20.2/go.mod h1:EWW50tG37NNdEj8j5u6DZ7bo6LtgJk54BrHw3c7HsRo=
 github.com/spf13/cobra v1.7.0/go.mod h1:uLxZILRyS/50WlhOIKD7W6V5bgeIt+4sICxh6uRMrb0=
 github.com/spf13/pflag v1.0.5/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
 github.com/spf13/pflag v1.0.7/go.mod h1:McXfInJRrz4CZXVZOBLb0bTZqETkiAhM9Iw0y3An2Bg=
