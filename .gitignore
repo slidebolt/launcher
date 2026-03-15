@@ -6,3 +6,5 @@ vendor/
 launcher
 
 scripts/.release_guard
+
+**/.env.local
